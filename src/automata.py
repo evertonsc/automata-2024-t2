@@ -1,7 +1,5 @@
 """Implementação de autômatos finitos."""
-from typing import List, Tuple, Dict, Set
-
-def load_automata(filename: str) -> Tuple[List[str], List[str], List[Tuple[str, str, str]], str, List[str]]:
+def load_automata(filename: str):
     """
     Lê os dados de um autômato finito a partir de um arquivo.
 

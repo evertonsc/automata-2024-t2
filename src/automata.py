@@ -1,5 +1,6 @@
-"""Implementação de autômatos finitos."""
-def load_automata(filename: str):
+from typing import List, Tuple, Dict, Set
+
+def load_automata(filename: str) -> Tuple[List[str], List[str], List[Tuple[str, str, str]], str, List[str]]:
     """
     Lê os dados de um autômato finito a partir de um arquivo.
 
@@ -29,117 +30,134 @@ def load_automata(filename: str):
     ```
 
     Caso o arquivo seja inválido uma exceção Exception é gerada.
-
     """
-    with open(filename, "rt", encoding="utf-8") as arquivo:
-        lines = arquivo.readlines()
+    with open(filename, "rt", encoding="utf-8") as file:
+        lines = [line.strip() for line in file.readlines()]
 
-    alphabet = tuple(lines[0].strip().split())
-    states = tuple(lines[1].strip().split())
-    final_states = tuple(lines[2].strip().split())
-    initial_state = lines[3].strip()
-    delta = [tuple(line.strip().split()) for line in lines[4:]]
+    if len(lines) < 5:
+        raise ValueError("Arquivo inválido: número insuficiente de linhas.")
 
+    alphabet = lines[0].split()
+    states = lines[1].split()
+    final_states = lines[2].split()
+    initial_state = lines[3]
+
+    transitions = []
+    for line in lines[4:]:
+        origin, symbol, destination = line.split()
+        transitions.append((origin, symbol, destination))
+
+    if not set(final_states).issubset(states):
+        raise ValueError("Estado final inválido.")
     if initial_state not in states:
-        raise ValueError("Estado inicial inválido")
+        raise ValueError("Estado inicial inválido.")
 
-    if any(state not in states for state in final_states):
-        raise ValueError("Estado final inválido")
+    for origin, symbol, destination in transitions:
+        if origin not in states or destination not in states:
+            raise ValueError(f"Estado na transição inválido: {origin} ou {destination}")
+        if symbol != '&' and symbol not in alphabet:
+            raise ValueError(f"Símbolo na transição inválido: {symbol}")
 
-    if any(
-            edge[0] not in states or
-            (edge[1] not in alphabet and edge[1] != '&') or
-            edge[2] not in states
-            for edge in delta
-    ):
-        raise ValueError("Edge inválido")
+    return states, alphabet, transitions, initial_state, final_states
 
-    return states, alphabet, delta, initial_state, final_states
-
-
-def process(automata, words):
+def process(automaton: Tuple[List[str], List[str], List[Tuple[str, str, str]], str, List[str]], words: List[str]) -> \
+        Dict[str, str]:
     """
     Processa a lista de palavras e retora o resultado.
 
     Os resultados válidos são ACEITA, REJEITA, INVALIDA.
     """
-    states, alphabet, delta, initial_state, final_states = automata
-    result = {}
+    states, alphabet, delta, initial_state, final_states = automaton
+    results = {}
 
     for word in words:
-        current_state = initial_state
-        is_valid_word = True
+        if any(char not in alphabet for char in word):
+            results[word] = "INVALIDA"
+            continue
 
+        current_state = initial_state
+        valid = True
         for symbol in word:
-            if symbol not in alphabet:
-                result[word] = "INVALIDA"
-                is_valid_word = False
+            next_state = None
+            for origin, sym, dest in delta:
+                if origin == current_state and sym == symbol:
+                    next_state = dest
+                    break
+            if next_state:
+                current_state = next_state
+            else:
+                valid = False
                 break
 
-            for edge in delta:
-                if edge[0] == current_state and edge[1] == symbol:
-                    current_state = edge[2]
-                    break
+        if valid and current_state in final_states:
+            results[word] = "ACEITA"
+        else:
+            results[word] = "REJEITA"
 
-        if is_valid_word:
-            result[word] = "ACEITA" if current_state in final_states else "REJEITA"
+    return results
 
-    return result
-
-
-def handle_closure(state, delta):
-    """Retorna o fecho de um estado em um NFA."""
+def handle_closure(state: str, delta: List[Tuple[str, str, str]]) -> Set[str]:
+    """
+    Retorna o fecho de um estado em um NFA.
+    """
     closure = {state}
     stack = [state]
 
     while stack:
         current = stack.pop()
-        closure.update(
-            edge[2] for edge in delta if edge[0] == current and edge[1] == '&'
-        )
-        stack.extend(
-            edge[2] for edge in delta if edge[0] == current and edge[1] == '&' and edge[2] not in closure
-        )
+        closure.update(dest for origin, sym, dest in delta if origin == current and sym == '&' and dest not in closure)
+        stack.extend(dest for origin, sym, dest in delta if origin == current and sym == '&' and dest not in closure)
 
     return closure
 
-
-def convert_to_dfa(automata):
+def convert_to_dfa(automaton: Tuple[List[str], List[str], List[Tuple[str, str, str]], str, List[str]]) -> Tuple[
+    List[str], List[str], List[Tuple[str, str, str]], str, List[str]]:
     """Converte um NFA num DFA."""
-    alphabet, delta, initial_state, final_states = automata[1:]
-    initial_closure = handle_closure(initial_state, delta)
-    new_states = [initial_closure]
-    new_delta = []
+    states, alphabet, delta, initial_state, final_states = automaton
+
+    def find_transitions(states_set: Set[str], symbol: str) -> Set[str]:
+        return {dest for state in states_set for origin, sym, dest in delta if origin == state and sym == symbol}
+
+    def epsilon_closure(states_set: Set[str]) -> Set[str]:
+        closure = set(states_set)
+        stack = list(states_set)
+
+        while stack:
+            current_state = stack.pop()
+            for origin, sym, dest in delta:
+                if origin == current_state and sym == '&' and dest not in closure:
+                    closure.add(dest)
+                    stack.append(dest)
+
+        return closure
+
+    def state_to_str(state_set: Set[str]) -> str:
+        return ','.join(sorted(state_set))
+
+    initial_closure = epsilon_closure({initial_state})
     queue = [initial_closure]
-    state_map = {"".join(sorted(initial_closure)): initial_closure}
+    visited = []
+    new_states = []
+    new_delta = []
+    new_final_states = []
 
     while queue:
         current_closure = queue.pop(0)
-        current_closure_name = "".join(sorted(current_closure))
+        current_str = state_to_str(current_closure)
+        if current_closure not in visited:
+            visited.append(current_closure)
+            new_states.append(current_str)
 
-        for symbol in alphabet:
-            next_closure = set()
+            if current_closure & set(final_states):
+                new_final_states.append(current_str)
 
-            for state in current_closure:
-                next_closure.update(
-                    handle_closure(edge[2], delta)
-                    for edge in delta if edge[0] == state and edge[1] == symbol
-                )
+            for symbol in alphabet:
+                next_closure = epsilon_closure(find_transitions(current_closure, symbol))
+                if next_closure:
+                    next_str = state_to_str(next_closure)
+                    new_delta.append((current_str, symbol, next_str))
+                    if next_closure not in visited:
+                        queue.append(next_closure)
 
-            next_closure_name = "".join(sorted(next_closure))
-
-            if next_closure_name not in state_map:
-                state_map[next_closure_name] = next_closure
-                new_states.append(next_closure)
-                queue.append(next_closure)
-
-            new_delta.append((current_closure_name, symbol, next_closure_name))
-
-    new_final_states = [
-        "".join(sorted(state))
-        for state in new_states if any(substate in final_states for substate in state)
-    ]
-
-    new_initial_state = "".join(sorted(initial_closure))
-
-    return tuple(state_map.keys()), alphabet, new_delta, new_initial_state, new_final_states
+    new_initial_state = state_to_str(initial_closure)
+    return new_states, alphabet, new_delta, new_initial_state, new_final_states
